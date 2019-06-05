@@ -1,0 +1,184 @@
+#!/bin/bash
+# xxxxxxxxxxxxx.sh - (c) 2018 DXC
+# -------------------------------------------------------------------------------------
+# Script        :
+# -------------------------------------------------------------------------------------
+# Description:
+# ------------
+#
+# -------------------------------------------------------------------------------------
+# Change Log:
+# -----------
+# Errorcode:
+# RC 100 no parameter used
+
+# Logfile comment change to the log destination
+#LOG=/dev/null
+now=$(date +"%m_%d_%Y")
+LOG=/usr2/local/kostadh/report-syslog-$now.csv
+
+
+SERVER=""
+SEVERLIST=""
+
+echo "Servername,Syslog,Value,Result" > $LOG
+
+if [ "$1" == "" ]
+then
+  echo "Parameter are needed!!! Use --help for parameter."
+  exit 100
+fi
+while [ "$1" != "" ]
+do
+  case "$1" in
+  -h|--help)
+
+    echo "######## Help ########"
+    echo ""
+    echo "-h | --help shows this help"
+    echo ""
+    echo "-l | --serverlist <file> file with a FQDN list of servers"
+    echo "-s | --server <servername> Name of the server that should be scanned"
+    echo ""
+    echo "######################"
+
+    exit 0
+   ;;
+  -l|--serverlist)
+     shift
+     SERVERLIST=$1
+   ;;
+  -s|--server)
+     shift
+     SERVER=$1
+   ;;
+
+  esac
+  shift
+done
+
+function sendmail
+{
+  MAILTO="hristo.kostadinov@dxc.com"
+  MAILFROM="hristo.kostadinov@partners.basf.com"
+  EMAILTEXT="Syslog-Report"
+  ATTACHMENT=$LOG
+
+  echo "$EMAILTEXT.$now" | mail -s "Automated email" -a $ATTACHMENT -r $MAILFROM $MAILTO
+
+}
+
+function check_a_port
+{
+#Checks if a port is open with ncat, netcat, nc or telnet depening what is avalable
+#parameter $1 IP $2 port
+IP=$1
+PORT=$2
+
+  if which ncat &>/dev/null
+  then
+    if ncat -w 1 -z -i 10 -u $IP $PORT &>/dev/null
+    then
+      echo "$NODE,$IP,$PORT is open,ok" | tee -a $LOG
+    else
+      echo "$NODE,$IP,$PORT is closed,failed" | tee -a $LOG
+    fi
+  else
+    if which nc &>/dev/null
+    then
+      if nc -w 1 -i 10 -u $IP $PORT &>/dev/null
+      then
+        echo "$NODE,$IP,$PORT is open,ok" | tee -a $LOG
+      else
+        echo "$NODE,$IP,$PORT is closed,failed" | tee -a $LOG
+      fi
+    else
+      if which netcat &>/dev/null
+      then
+        if netcat -w 1 -z -i 10 -u $IP $PORT &>/dev/null
+        then
+          echo "$NODE,$IP,$PORT is open,ok" | tee -a $LOG
+        else
+          echo "$NODE,$IP,$PORT is closed,failed" | tee -a $LOG
+        fi
+      else
+        echo "$NODE,NO,No netcat found,failed"
+        #timeout 5 bash -c 'echo "^]" | telnet $IP $PORT' &>/dev/null
+        #RC 1 = ok RC 124 = failed
+        #if ! [ "$(echo $?)" == 1 ]
+        #then
+        #  echo "$NODE,$IP,$PORT is open,ok" | tee -a $LOG
+        #else
+        #  echo "$NODE,$IP,$PORT is closed,failed" | tee -a $LOG
+        #fi
+      fi
+    fi
+  fi
+}
+
+
+function runcommands
+{
+  NODE=$1
+  if ssh $NODE -q -o BatchMode=yes -o ConnectTimeout=10 "uname" &>/dev/null
+  then
+    if ssh $NODE "ls /etc/syslog-ng/syslog-ng.conf" &>/dev/null
+    then
+      if ssh $NODE "grep security.bcs.de /etc/syslog-ng/syslog-ng.conf" &>/dev/null
+      then
+        echo "$NODE,syslog-ng BASF,security.bcs.de found,ok" | tee -a $LOG
+      else
+        echo "$NODE,syslog-ng BASF,security.bcs.de not found,failed" | tee -a $LOG
+      fi
+    fi
+
+    if ssh $NODE "ls /etc/rsyslog.conf" &>/dev/null
+    then
+      if ssh $NODE "grep security.bcs.de /etc/rsyslog.conf" &>/dev/null
+      then
+        echo "$NODE,rsyslog BASF,security.bcs.de found,ok" | tee -a $LOG
+      else
+        echo "$NODE,rsyslog BASF,security.bcs.de not found,failed" | tee -a $LOG
+      fi
+    fi
+         if ssh $NODE "ls /etc/rsyslog.d/remote.conf" &>/dev/null
+    then
+      if ssh $NODE "grep security.bcs.de /etc/rsyslog.d/remote.conf" &>/dev/null
+      then
+        echo "$NODE,rsyslog.d/remote.conf BASF,security.bcs.de found,ok" | tee -a $LOG
+      else
+        echo "$NODE,rsyslog.d/remote.conf BASF,security.bcs.de not found,failed" | tee -a $LOG
+      fi
+    fi
+        if ssh $NODE "ls /etc/syslog.conf" &>/dev/null
+        then
+          if ssh $NODE "grep security.bcs.de /etc/syslog.conf" &>/dev/null
+          then
+            echo "$NODE,syslog BASF,security.bcs.de found,ok" | tee -a $LOG
+          else
+            echo "$NODE,syslog BASF,security.bcs.de not found,failed" | tee -a $LOG
+          fi
+        fi
+
+
+    check_a_port security.bcs.de 514
+
+  else
+    echo "$NODE, isn't reachabe via ssh" | tee -a $LOG
+  fi
+
+}
+
+if [ "$SERVER" != "" ]
+then
+  runcommands $SERVER
+fi
+if [ "$SERVERLIST" != "" ]
+then
+  for NEXTSERVER in $(cat $SERVERLIST| grep -v "^#")
+  do
+    runcommands $NEXTSERVER
+  done
+fi
+
+sendmail
